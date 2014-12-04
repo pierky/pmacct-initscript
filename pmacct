@@ -1,0 +1,248 @@
+#! /bin/sh
+### BEGIN INIT INFO
+# Provides:          pmacct-daemons
+# Required-Start:    $local_fs $remote_fs 
+# Required-Stop: 
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: pmacct daemons initscript
+# Description:       pmacct daemons initscript
+### END INIT INFO
+
+# Author: Pier Carlo Chiodi (aka Pierky) <pierky@pierky.com>
+#         http://www.pierky.com
+#
+# This script is aimed to manage multiple instances of pmacct daemons
+# (http://www.pmacct.net/ by Paolo Lucente)
+#
+# For each daemon (pmacctd|nfacctd|sfacctd|uacctd), one or more
+# instances may be managed; instances are mapped one-to-one to 
+# configuration files that are in the $CONFIG_DIR directory 
+# (/etc/pmacct by default). Configuration files' names must
+# follow this schema:
+#
+#  <daemon_name>[.<instance_id>].conf
+#
+# An instance's name is composed by the name of the daemon + "." +
+# an optional instance ID; if the instance ID is omitted the 
+# "default" ID is used.
+#
+# Example:
+#
+#  pmacctd.conf ---> daemon = pmacctd, instance = "pmacctd.default"
+#  pmacctd.2.conf -> daemon = pmacctd, instance = "pmacctd.2"
+#  nfacctd.1.conf -> daemon = nfacctd, instance = "nfacctd.1"
+# 
+# The second argument of this script may be used to selectively
+# start/stop a single instance; if omitted, all the instances
+# are started/stopped:
+#
+# Example:
+#
+#  /etc/init.d/pmacct start pmacctd.default
+#
+#  service pmacct stop nfacctd.1
+#
+# Daemons are started with -D option (Daemonize) and with 
+# -F option (PID file) pointing to $PIDDIR/<instance_id>
+# (PIDDIR default to /var/run/pmacct). It's safe to avoid
+# using the "pidfile" and "daemonize" keys in the configuration
+# file.
+
+PATH=/sbin:/usr/sbin:/bin:/usr/bin:/usr/local/sbin
+DESC="pmacct daemons"
+SCRIPTNAME="pmacct"
+
+CONFIG_DIR=/etc/pmacct
+PIDDIR=/var/run/pmacct
+DAEMONDIR=/usr/local/sbin
+
+mkdir -p $PIDDIR >/dev/null 2>&1 || true
+
+# Load the VERBOSE setting and other rcS variables
+. /lib/init/vars.sh
+
+# Define LSB log_* functions.
+# Depend on lsb-base (>= 3.2-14) to ensure that this file is present
+# and status_of_proc is working.
+. /lib/lsb/init-functions
+
+CONFIGS=`cd $CONFIG_DIR; ls *.conf 2>/dev/null | egrep -e "^(pmacctd|nfacctd|sfacctd|uacctd)\."`
+
+if [ -z "$CONFIGS" ]; then
+	log_failure_msg "ERROR: no pmacct configuration instances found on $CONFIG_DIR. Please refer to comments in $0 for more details."
+	exit 1
+fi
+
+SELECTED_INSTANCE="$2"
+
+signal_to_childprocesses()
+{
+	# $1 PID
+	# $2 Signal
+
+	for PID in `ps --ppid $1 -o pid h`
+	do
+		kill -$2 $PID
+	done
+}
+
+# Function that starts the daemon/service
+#
+do_start()
+{
+	# Return
+	#   0 if daemon has been started
+	#   1 if daemon was already running
+	#   2 if daemon could not be started
+
+	start-stop-daemon --start --quiet --pidfile $PIDFILE --exec $DAEMON --test > /dev/null \
+		|| return 1
+	start-stop-daemon --start --quiet --pidfile $PIDFILE --exec $DAEMON -- \
+		$DAEMON_ARGS \
+		|| return 2
+}
+
+#
+# Function that stops the daemon/service
+#
+do_stop()
+{
+	# Return
+	#   0 if daemon has been stopped
+	#   1 if daemon was already stopped
+	#   2 if daemon could not be stopped
+	#   other if a failure occurred
+
+	RETVAL="2"
+
+	if [ -f $PIDFILE ]; then
+		signal_to_childprocesses `cat $PIDFILE` INT
+
+		for w in 2 5 10
+		do
+			# wait for child processes to end
+
+			sleep $w
+
+			if [ -f $PIDFILE ]; then
+				ps `cat $PIDFILE` | grep $DAEMON_NAME >/dev/null
+
+				if [ $? -ne 0 ]; then
+					RETVAL="0"
+					break
+				fi
+			else
+				RETVAL="0"
+				break
+			fi
+		done
+
+		if [ "$RETVAL" -ne "0" ]; then
+			if [ -f $PIDFILE ]; then
+				ps `cat $PIDFILE` | grep $DAEMON_NAME >/dev/null
+
+				if [ $? -eq 0 ]; then
+					start-stop-daemon --stop --quiet --retry=TERM/30/KILL/5 --pidfile $PIDFILE --name $DAEMON_NAME
+					RETVAL="$?"
+				fi
+			fi
+		fi
+
+		rm -f $PIDFILE
+		return "$RETVAL"
+	else
+		return "2"
+	fi
+}
+
+do_reload() {
+	if [ -f $PIDFILE ]; then
+		#signal_to_childprocesses `cat $PIDFILE` USR2
+		kill -USR2 `cat $PIDFILE`
+		return 0
+	else
+		return 1
+	fi
+}
+
+for CONFIG in $CONFIGS
+do
+	INSTANCE=${CONFIG%%.conf}
+	DAEMON_NAME=`echo ${CONFIG%%.} | cut -d"." -f1`
+	if [ "$INSTANCE" = "$DAEMON_NAME" ]; then
+		INSTANCE="$DAEMON_NAME.default"
+	fi
+	DAEMON=$DAEMONDIR/$DAEMON_NAME
+	PIDFILE=$PIDDIR/$INSTANCE
+	DAEMON_ARGS="-F $PIDFILE -D -f $CONFIG_DIR/$CONFIG"
+
+	#echo "INSTANCE: $INSTANCE"
+	#echo "DAEMON_NAME: $DAEMON_NAME"
+	#echo "DAEMON: $DAEMON"
+	#echo "PIDFILE: $PIDFILE"
+	#echo "DAEMON_ARGS: $DAEMON_ARGS"
+	#continue
+
+	if [ -z "$SELECTED_INSTANCE" -o "$SELECTED_INSTANCE" = "$INSTANCE" ]; then
+		case "$1" in
+		  start)
+			[ "$VERBOSE" != no ] && log_daemon_msg "Starting $DAEMON_NAME, instance $INSTANCE"
+			do_start
+			case "$?" in
+				0|1) [ "$VERBOSE" != no ] && log_end_msg 0 ;;
+				2) [ "$VERBOSE" != no ] && log_end_msg 1 ;;
+			esac
+			;;
+		  stop)
+			[ "$VERBOSE" != no ] && log_daemon_msg "Stopping $DAEMON_NAME, instance $INSTANCE"
+			do_stop
+			case "$?" in
+				0|1) [ "$VERBOSE" != no ] && log_end_msg 0 ;;
+				2) [ "$VERBOSE" != no ] && log_end_msg 1 ;;
+			esac
+			;;
+		  status)
+			if [ -f $PIDFILE ]; then
+				ps `cat $PIDFILE` | grep "$DAEMON_NAME" >/dev/null
+
+				if [ $? -eq 0 ]; then
+					log_success_msg "$DAEMON_NAME, instance $INSTANCE is running"
+				else
+					log_failure_msg "$DAEMON_NAME, instance $INSTANCE is not running"
+				fi
+			else
+				log_failure_msg "$DAEMON_NAME, instance $INSTANCE is not running"
+			fi
+			;;
+		  reload)
+			log_daemon_msg "Reloading $DAEMON_NAME, instance $INSTANCE"
+			do_reload
+			log_end_msg $?
+			;;
+		  restart|force-reload)
+			log_daemon_msg "Restarting $DAEMON_NAME, instance $INSTANCE"
+			do_stop
+			case "$?" in
+			  0|1)
+				do_start
+				case "$?" in
+					0) log_end_msg 0 ;;
+					1) log_end_msg 1 ;; # Old process is still running
+					*) log_end_msg 1 ;; # Failed to start
+				esac
+				;;
+			  *)
+				# Failed to stop
+				log_end_msg 1
+				;;
+			esac
+			;;
+		  *)
+			echo "Usage: $SCRIPTNAME {start|stop|status|restart|reload}" >&2
+			exit 3
+			;;
+		esac
+	fi
+done
+:
