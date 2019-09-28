@@ -1,6 +1,6 @@
 # pmacct Systemd initscripts
 
-Systemd scripts for **pmacct** suitable for RedHat and Debian Linux flavours
+Systemd scripts for **pmacct** suitable for RedHat and Debian Linux flavours.
 
 ## Introduction
 The scripts in the `system` directory can be used to manage the various **pmacct** `systemd` daemons with the usual commands such as:
