@@ -1,0 +1,11 @@
+[Unit]
+Description=pmacctd daemon providing Promiscious Mode Accounting services
+Wants=network.target
+After=network.target
+ConditionPathExists=/etc/pmacct/pmacctd.conf
+
+[Service]
+ExecStart=/usr/local/sbin/pmacctd -f /etc/pmacct/pmacctd.conf 
+
+[Install]
+WantedBy=multi-user.target

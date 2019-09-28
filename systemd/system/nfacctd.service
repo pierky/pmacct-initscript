@@ -1,0 +1,12 @@
+[Unit]
+Description=nfacctd daemon providing Netflow collection service
+Wants=network.target
+After=network.target
+ConditionPathExists=/etc/pmacct/nfacctd.conf
+
+[Service]
+ExecStart=/usr/local/sbin/nfacctd -f /etc/pmacct/nfacctd.conf
+
+[Install]
+WantedBy=multi-user.target
+ 
